@@ -1,31 +1,31 @@
 package io.jenkins.plugins.warnings.violations.github;
 
+import com.cloudbees.jenkins.GitHubRepositoryName;
+import com.google.common.base.Predicate;
+import com.google.common.collect.Iterables;
+import com.thoughtworks.xstream.mapper.Mapper;
+import hudson.EnvVars;
 import hudson.Extension;
-import hudson.model.*;
+import hudson.model.Run;
+import hudson.model.TaskListener;
+import hudson.slaves.NodeProperty;
 import hudson.util.LogTaskListener;
 import io.jenkins.plugins.analysis.core.extension.warnings.Output;
 import io.jenkins.plugins.analysis.core.extension.warnings.OutputDescriptor;
-import org.jenkinsci.plugins.github.GitHubPlugin;
-//import org.jenkinsci.plugins.github.config.GitHubPluginConfig;
-import org.jenkinsci.plugins.github.config.GitHubServerConfig;
-//import org.kohsuke.github.GitHub;
+import jenkins.model.Jenkins;
 import org.jenkinsci.Symbol;
 import org.kohsuke.github.*;
 import org.kohsuke.stapler.DataBoundConstructor;
-import com.cloudbees.jenkins.GitHubRepositoryName;
+
 import java.io.IOException;
-import java.util.*;
-//import java.util.Optional;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-//import com.github.kostyasha.github.integration.generic.repoprovider.GHPermission;
-import org.jenkinsci.plugins.github.util.misc.NullSafePredicate;
-//import javax.annotation.Nonnull;
-import com.google.common.base.Predicate;
-
-import javax.annotation.Nonnull;
 
 /**
  * Created by jeremymarshall on 10/12/18.
@@ -37,6 +37,7 @@ public class PullRequestComment extends Output {
     volatile private int prID = 0;
     volatile private GHRepository myRepsitory = null;
     volatile private GHPullRequest pr = null;
+    volatile private List<Diff> diff = new ArrayList<>();
 
     @DataBoundConstructor
     public PullRequestComment() {
@@ -46,50 +47,23 @@ public class PullRequestComment extends Output {
     @Override
     public boolean prepare(final Run<?, ?> run) {
 
-        Map<String, String> env = new HashMap<>();
+        Map<String, String> env = null;
         try {
             env = run.getEnvironment(new LogTaskListener(LOGGER, Level.INFO));
             env.forEach((k, v) -> log("key: " + k + " value:" + v));
-        } catch (InterruptedException ex) {
-
-        } catch (IOException ex) {
-
+        } catch (InterruptedException | IOException ex) {
+            log("couldn't get environment");
+            return false;
         }
 
         // is it a git project
-        if (env.containsKey("CHANGE_URL")) {
-            fromPR(env.get("CHANGE_URL"));
-        } else {
-            if (env.containsKey("GIT_URL")) {
-                gitUrl = env.get("GIT_URL");
-            } else {
-                log("not a git repo");
-                return false;
-            }
-            if (env.containsKey("GIT_BRANCH")) {
-                gitBranch = env.get("GIT_BRANCH");
-            } else {
-                log("not a git repo");
-                return false;
-            }
+        if (! fromEnv(env.getOrDefault("CHANGE_URL", ""), env)) {
+            log("not a git repo");
+            return false;
         }
 
         GitHubRepositoryName repo = GitHubRepositoryName.create(gitUrl);
-
-        Iterable<GHRepository> xxx = repo.resolve();
-
-        for (GHRepository repository : xxx) {
-            try {
-                //pr = repository.getPullRequest(prID);
-                Set<String> c = repository.getCollaboratorNames();
-                if (c.contains(repo.getUserName())) {
-                    myRepsitory = repository;
-                    break;
-                }
-            } catch (IOException e) {
-                log("user %s doesn't have access...", repo.getUserName());
-            }
-        }
+        myRepsitory = Iterables.tryFind(repo.resolve(), canPush).orNull();
 
         if(myRepsitory == null) {
             log("Didn't find a user with collaborator permissions to %s", gitUrl);
@@ -97,26 +71,32 @@ public class PullRequestComment extends Output {
         }
 
         if (prID == 0) {
-            try {
-                for(GHPullRequest pr: myRepsitory.getPullRequests(GHIssueState.OPEN)) {
-                    String sss = pr.getHead().getRepository().getFullName();
-                    if(gitUrl.contains(sss) && gitBranch.contains(pr.getHead().getRef())) {
-                        prID = pr.getId();
-                        break;
-                    }
+
+            Predicate<GHPullRequest> prForBranch = pr -> {
+                String sss = pr.getHead().getRepository().getFullName();
+                if(gitUrl.contains(sss) && gitBranch.contains(pr.getHead().getRef())) {
+                    return true;
                 }
+                return false;
+            };
+
+            try {
+                pr = Iterables.tryFind(myRepsitory.getPullRequests(GHIssueState.OPEN), prForBranch).orNull();
             } catch (IOException e) {
 
+            }
+            if(pr != null) {
+                prID = pr.getId();
             }
         }
         try {
             pr = myRepsitory.getPullRequest(prID);
 
             PagedIterable<GHPullRequestFileDetail> prf = pr.listFiles();
-            prf.forEach((v) -> log("prf:" + v.getFilename() + " patch " +v.getPatch()));
 
-//            PagedIterable<GHPullRequestReview> prc = pr.listReviews();
-//            prc.forEach((v) -> log("prc:" + v.getCommitId()));
+            pr.listFiles().forEach((v) -> diff.add(new Diff( v.getFilename(), v.getPatch())));
+
+            prf.forEach((v) -> log("prf:" + v.getFilename() + " patch " +v.getPatch()));
         } catch (IOException e) {
             return false;
         }
@@ -164,7 +144,7 @@ public class PullRequestComment extends Output {
 
     }
 
-    private void fromPR(String prUrl) {
+    private boolean fromEnv(String prUrl, Map<String, String> env) {
         Pattern pattern = Pattern.compile("(.*)/pull/(\\d+)$");
 
         // get a matcher object
@@ -172,8 +152,23 @@ public class PullRequestComment extends Output {
         if(matcher.find()) {
             gitUrl = matcher.group(1);
             prID = Integer.parseInt(matcher.group(2));
+            return true;
+        } else {
+            gitUrl = env.getOrDefault("GIT_URL", null);
+            gitBranch = env.getOrDefault("GIT_BRANCH", null);
+            return gitUrl != null && gitBranch != null;
         }
     }
+
+    Predicate<GHRepository> canPush = repository -> {
+        try {
+            repository.getCollaboratorNames();
+            return true;
+        } catch (IOException e) {
+            return false;
+        }
+    };
+
 
     static {
         LOGGER = Logger.getLogger(Run.class.getName());
