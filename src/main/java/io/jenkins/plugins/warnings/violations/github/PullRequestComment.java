@@ -63,6 +63,16 @@ public class PullRequestComment extends Output {
         }
 
         GitHubRepositoryName repo = GitHubRepositoryName.create(gitUrl);
+
+        Predicate<GHRepository> canPush = repository -> {
+            try {
+                repository.getCollaboratorNames();
+                return true;
+            } catch (IOException e) {
+                return false;
+            }
+        };
+
         myRepsitory = Iterables.tryFind(repo.resolve(), canPush).orNull();
 
         if(myRepsitory == null) {
@@ -86,7 +96,7 @@ public class PullRequestComment extends Output {
 
             }
             if(pr != null) {
-                prID = pr.getId();
+                prID = pr.getNumber();
             }
         }
         try {
@@ -159,16 +169,6 @@ public class PullRequestComment extends Output {
             return gitUrl != null && gitBranch != null;
         }
     }
-
-    Predicate<GHRepository> canPush = repository -> {
-        try {
-            repository.getCollaboratorNames();
-            return true;
-        } catch (IOException e) {
-            return false;
-        }
-    };
-
 
     static {
         LOGGER = Logger.getLogger(Run.class.getName());
