@@ -111,11 +111,14 @@ public class PullRequestCommentRunCache extends OutputRunCache {
             try {
                 pr = Iterables.tryFind(myRepsitory.getPullRequests(GHIssueState.OPEN), prForBranch).orNull();
             } catch (IOException e) {
+                throw new PRCException(e.getMessage());
+            }
 
+            if(pr == null) {
+                throw new PRCException("No PR found");
             }
-            if(pr != null) {
-                prID = pr.getNumber();
-            }
+            prID = pr.getNumber();
+
         }
         try {
             pr = myRepsitory.getPullRequest(prID);
