@@ -15,10 +15,8 @@ import org.jenkinsci.plugins.workflow.job.WorkflowJob;
 import org.kohsuke.github.*;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+import java.util.concurrent.Callable;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
@@ -31,9 +29,13 @@ public class PullRequestCommentRunCache extends OutputRunCache {
     private static final Logger LOGGER;
     private static Pattern pattern = Pattern.compile("(.*)/pull/(\\d+)$");
 
+    static {
+        LOGGER = Logger.getLogger(Run.class.getName());
+    }
+
+    int prID = 0;
     private String gitUrl = null;
     private String gitBranch;
-    int prID = 0;
     private GHRepository myRepsitory;
     private GHPullRequest pr = null;
     private List<Diff> diff = new ArrayList<>();
@@ -48,38 +50,22 @@ public class PullRequestCommentRunCache extends OutputRunCache {
             throw new PRCException("couldn't get environment");
         }
 
-        // is it a git project
-        Matcher matcher = pattern.matcher(env.getOrDefault("CHANGE_URL", ""));
-        if(matcher.find()) {
-            gitUrl = matcher.group(1);
-            prID = Integer.parseInt(matcher.group(2));
-        } else {
-            Job<?, ?> job = run.getParent();
-            SCM scm = null;
-            GitSCM gitScm = null;
+        Predicate<SCM> isGitLambda = (SCM scm) -> isGitScm(scm);
 
-            if (job instanceof WorkflowJob) {
-                Collection<? extends SCM> scms = ((WorkflowJob) job).getSCMs();
-                if (!scms.isEmpty()) {
-                    scm = scms.iterator().next(); // TODO: what should we do if more than one SCM has been used
-                }
-            }
-            else if (run instanceof AbstractBuild) {
-                AbstractProject project = ((AbstractBuild) run).getProject();
-                if (project.getScm() != null) {
-                    scm = project.getScm();
-                }
-                scm = project.getRootProject().getScm();
-            }
-            if(scm instanceof GitSCM) {
-                gitScm = (GitSCM) scm;
+        List<Callable<Boolean>> xx = Arrays.asList(
+                () -> isPR(env),
+                () -> isWorkflowJob(run, isGitLambda),
+                () -> isAbstractJbb(run, isGitLambda)
+        );
 
-                gitUrl = gitScm.getUserRemoteConfigs().get(0).getUrl();
-                gitBranch = gitScm.getBranches().get(0).getName();
-            } else {
-                throw new PRCException("not a git repo");
+        Predicate<Callable<Boolean>> isGit = func -> {
+            try {
+                return func.call();
+            } catch (Exception ex) {
+                return false;
             }
-        }
+        };
+        Iterables.tryFind(xx, isGit);
 
         GitHubRepositoryName repo = GitHubRepositoryName.create(gitUrl);
 
@@ -130,7 +116,51 @@ public class PullRequestCommentRunCache extends OutputRunCache {
             throw new PRCException(e.getMessage());        }
     }
 
-    static {
-        LOGGER = Logger.getLogger(Run.class.getName());
+    private boolean isGitScm(SCM scm) {
+        if(scm instanceof GitSCM) {
+            GitSCM gitScm = (GitSCM) scm;
+
+            gitUrl = gitScm.getUserRemoteConfigs().get(0).getUrl();
+            gitBranch = gitScm.getBranches().get(0).getName();
+            return true;
+        }
+        return false;
     }
+
+    private boolean isPR(Map<String, String> env) {
+        Matcher matcher = pattern.matcher(env.getOrDefault("CHANGE_URL", ""));
+        if (matcher.find()) {
+            gitUrl = matcher.group(1);
+            prID = Integer.parseInt(matcher.group(2));
+            return true;
+        }
+        return false;
+    }
+
+    private boolean isWorkflowJob(Run<?, ?> run, Predicate<SCM> isGitLambda){
+        Job<?, ?> job = run.getParent();
+        SCM scm = null;
+        GitSCM gitScm = null;
+        if (job instanceof WorkflowJob) {
+            Collection<? extends SCM> scms = ((WorkflowJob) job).getSCMs();
+            if (!scms.isEmpty()) {
+                scm = scms.iterator().next();
+            }
+        }
+        return isGitLambda.apply(scm);
+    }
+
+    private boolean isAbstractJbb(Run<?, ?> run, Predicate<SCM> isGitLambda){
+        SCM scm = null;
+        GitSCM gitScm = null;
+        if (run instanceof AbstractBuild) {
+            AbstractProject project = ((AbstractBuild) run).getProject();
+            if (project.getScm() != null) {
+                scm = project.getScm();
+            }
+            scm = project.getRootProject().getScm();
+        }
+        return isGitLambda.apply(scm);
+    }
+
 }
