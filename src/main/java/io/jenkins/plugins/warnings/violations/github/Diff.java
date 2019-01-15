@@ -19,6 +19,14 @@ public class Diff {
         this.fromTo = parse(diff);
     }
 
+    public List<FromTo> getFromTo() {
+        return fromTo;
+    }
+
+    public String getFilename() {
+        return filename;
+    }
+
     private List<FromTo> parse(String diff) {
         Matcher matcher = pattern.matcher(diff);
         List<FromTo> ret = new ArrayList<>();

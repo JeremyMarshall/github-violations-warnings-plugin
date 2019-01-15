@@ -59,7 +59,8 @@ public class PullRequestComment extends Output {
 
     @Override
     public final void newIssue(OutputRunCache cache, final String message, final String filename, final int lineStart) {
-        log("Issue '%s','%s','%d'", message, filename, lineStart);
+        if (isInPR(cache, filename, lineStart))
+            log("Issue '%s','%s','%d'", message, filename, lineStart);
     }
 
     @Override
@@ -69,7 +70,8 @@ public class PullRequestComment extends Output {
 
     @Override
     public final void outstandingIssue(OutputRunCache cache, final String message, final String filename, final int lineStart) {
-        log("Issue '%s','%s','%d'", message, filename, lineStart);
+        if (isInPR(cache, filename, lineStart))
+            log("Issue '%s','%s','%d'", message, filename, lineStart);
     }
 
     @Override
@@ -79,7 +81,8 @@ public class PullRequestComment extends Output {
 
     @Override
     public final void fixedIssue(OutputRunCache cache, final String message, final String filename, final int lineStart) {
-        log("Issue '%s','%s','%d'", message, filename, lineStart);
+        if (isInPR(cache, filename, lineStart))
+            log("Issue '%s','%s','%d'", message, filename, lineStart);
     }
 
     @Symbol("githubPullRequestComment")
@@ -90,6 +93,18 @@ public class PullRequestComment extends Output {
             return "Github Pull Request Comment";
         }
 
+    }
+
+    private static boolean isInPR(OutputRunCache cache, final String filename, final int lineStart) {
+
+        PullRequestCommentRunCache prcrc = (PullRequestCommentRunCache) cache;
+
+        Predicate<FromTo> xx = ft -> {
+            return lineStart >= ft.getFrom() && lineStart <= ft.getTo();
+        };
+
+
+        return prcrc.inPR(filename, xx);
     }
 
     static {

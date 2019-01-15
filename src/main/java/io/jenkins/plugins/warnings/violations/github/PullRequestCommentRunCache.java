@@ -14,6 +14,7 @@ import io.jenkins.plugins.analysis.core.extension.warnings.OutputRunCache;
 import org.jenkinsci.plugins.workflow.job.WorkflowJob;
 import org.kohsuke.github.*;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.Callable;
@@ -39,9 +40,11 @@ public class PullRequestCommentRunCache extends OutputRunCache {
     private GHRepository myRepsitory;
     private GHPullRequest pr = null;
     private List<Diff> diff = new ArrayList<>();
+    private Run<?,?> thisRun;
 
     public PullRequestCommentRunCache(final Run<?, ?> run) throws PRCException{
 
+        thisRun = run;
         Map<String, String> env;
 
         try {
@@ -125,6 +128,24 @@ public class PullRequestCommentRunCache extends OutputRunCache {
             return true;
         }
         return false;
+    }
+
+    public List<Diff> getDiff() {
+        return diff;
+    }
+
+    public boolean inPR(String filename, Predicate<FromTo> predicate) {
+
+        Predicate<Diff> xx = file -> {
+
+            String xxx = filename.replace(thisRun.getExecutor().getCurrentWorkspace().toString() + File.separator, "");
+
+            if( !xxx.equals(file.getFilename()))
+               return false;
+
+            return Iterables.tryFind(file.getFromTo(), predicate).orNull() != null;
+        };
+        return Iterables.tryFind(diff, xx).orNull() != null;
     }
 
     private boolean isPR(Map<String, String> env) {

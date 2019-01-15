@@ -11,4 +11,12 @@ public class FromTo {
         this.from = from;
         this.to = from + len;
     }
+
+    public int getFrom() {
+        return from;
+    }
+
+    public int getTo() {
+        return to;
+    }
 }
